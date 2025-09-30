@@ -4,8 +4,4 @@ dist/
 __pycache__/
 .venv/
 .idea/
-
-!data/
 data/*
-!data/dataloader.py
-save/
