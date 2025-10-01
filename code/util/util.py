@@ -11,23 +11,24 @@ from collections import Counter
 from math import sqrt
 from scipy.signal import lombscargle
 from neurokit2.misc import NeuroKitWarning
-# warnings.filterwarnings(action='ignore')
-# warnings.filterwarnings("ignore", category=NeuroKitWarning)
-# warnings.filterwarnings("ignore", category=RuntimeWarning)
-# warnings.filterwarnings("ignore", category=NeuroKitWarning)
-# warnings.filterwarnings("ignore", category=RuntimeWarning)
-
+warnings.filterwarnings(action='ignore')
+warnings.filterwarnings("ignore", category=NeuroKitWarning)
+warnings.filterwarnings("ignore", category=RuntimeWarning)
+from warnings import warn
+from neurokit2 import signal_autocor
+from neurokit2.eda import eda_sympathetic
 
 FS_ECG = 512
 FS_PPG = 51.2
 
-def data_split(base_dir: str, output_dir: str):
+def data_split(base_dir: str, output_dir: str, check_ctl_inter=False):
     """
-    주어진 한 Subject의 원본 데이터를 분석하여 VR 타임스탬프를 기준으로 ECG, PPG/GSR 데이터를 'loaw', 'mid', 'high' 등의 구간으로 분할하고 (output_dir)에 저장.
+    주어진 한 Subject의 원본 데이터를 분석하여 VR 타임스탬프를 기준으로 ECG, PPG/GSR 데이터를 'low', 'mid', 'high' 등의 구간으로 분할하고 (output_dir)에 저장.
 
     Args:
         base_dir (str): 'ECG_PPG_GSR', 'VR_Timestamp' 폴더를 포함하는 한 Subject 원본 데이터의 최상위 경로.
         output_dir (str): 분할된 CSV 파일들을 저장할 목적지 경로.
+        check_list (str): control과 intervene feature도 뽑을 것인지 확인
     """
     # ------------------------- 1. 데이터 경로 변수 초기화 -------------------------
     # PPG, GSR 파일 경로
@@ -79,7 +80,7 @@ def data_split(base_dir: str, output_dir: str):
     ECG_df = load_csv(ECG_path)
 
     # VR 타임스탬프 파일에서 각 구간(start, end, low, mid, high)의 시간 정보 추출
-    start, end, low, mid, high = get_VR_timestamp(file_path=VR_timestamp_path)
+    start, end, low, mid, high, control, intervene = get_VR_timestamp(file_path=VR_timestamp_path, temp=check_ctl_inter)
 
     # ------------------------- 5. VR 타임스탬프 기준으로 데이터 필터링 (PPG & ECG) -------------------------
     # PPG 데이터를 각 구간별로 필터링
@@ -112,6 +113,19 @@ def data_split(base_dir: str, output_dir: str):
     save_filtered_data(mid_ECG, output_dir, "mid", "ECG")
     save_filtered_data(high_ECG, output_dir, "high", "ECG")
 
+    if control != None and intervene != None and check_ctl_inter:
+
+        control_PPG = filter_data_by_time(PPG_df, control, PPG_timestamp_column_name)
+        control_ECG = filter_data_by_time(ECG_df, control, ECG_timestamp_column_name)
+
+        intervene_PPG = filter_data_by_time(PPG_df, intervene, PPG_timestamp_column_name)
+        intervene_ECG = filter_data_by_time(ECG_df, intervene, ECG_timestamp_column_name)
+
+        save_filtered_data(control_PPG, output_dir, "control", "PPG")
+        save_filtered_data(intervene_PPG, output_dir, "intervene", "PPG")
+        save_filtered_data(control_ECG, output_dir, "control", "ECG")
+        save_filtered_data(intervene_ECG, output_dir, "intervene", "ECG")
+
     print(output_dir+'폴더에 Split데이터를 저장했습니다.\n')
 
 def load_csv(file_path):
@@ -127,58 +141,52 @@ def load_csv(file_path):
 
     return pd.read_csv(file_path, skiprows=[0, 2], sep='\t', low_memory=False)
 
-def get_VR_timestamp(file_path):
+def get_VR_timestamp(file_path, temp=False):
     """
-        VR 타임스탬프 Excel 파일을 분석하여 각 영상 구간의 시작 및 종료 시각을 추출.
-
-        Args:
-            file_path (str): VR 타임스탬프 정보가 담긴 Excel 파일의 경로.
-
-        Returns:
-            list[tuple], list[tuple], list[tuple], list[tuple], list[tuple] (e.g., [('YYYY-MM-DD HH:MM:SS.sss', 'YYYY-MM-DD HH:MM:SS.sss', '...')]):
-                각각 start, end, low, mid, high 구간에 대한 (시작 시각, 종료 시각) 튜플의 리스트.
+    VR_timestamp 파일을 읽어서 낮은 갈망(low), 중간 갈망(mid), 높은 갈망(high) 유발 영상의 시작과 종료 시간을 받는다.
+    :param file_path: VR_timestamp의 file 경로로.
+    :return: low(낮은 갈망), mid(중간 갈망), high(높은 갈망) 각각의 타임스탬프가 저장된 list.
     """
     df = pd.read_excel(file_path)
 
     def find_index_by_keyword(column_index, keyword):
         """
-            특정 열에서 특정 키워드가 포함된 행의 인덱스를 찾는 함수.
-
-            Args:
-                column_index(int): 검색할 열의 인덱스
-                keyword(str): 찾을 키워드 (예: '_낮은_', '_중간_', '_높은_')
-
-            return:
-                list | int: 해당 키워드를 포함하는 행의 인덱스
+        특정 열에서 특정 키워드가 포함된 행의 인덱스를 찾는 함수.
+        :param column_index: 검색할 열의 인덱스
+        :param keyword: 찾을 키워드 (예: '_낮은_', '_중간_', '_높은_')
+        :return: 해당 키워드를 포함하는 행의 인덱스 리스트
         """
         return df[df.iloc[:, column_index].astype(str).str.contains(keyword, na=False)].index.tolist()
 
-    # '괌' 키워드로 영상의 전체 시작과 끝 인덱스 탐색
     start_end_range = sorted(find_index_by_keyword(column_index=2, keyword='괌'))
+    if len(start_end_range) >= 3:
+        control_range = sorted(find_index_by_keyword(column_index=2, keyword='통제'))
+        intervene_range = sorted(find_index_by_keyword(column_index=2, keyword='중재'))
+        ctr = find_index_by_keyword(column_index=2, keyword='통제')
+        inv = find_index_by_keyword(column_index=2, keyword='중재')
+        ctr_sum = sum(ctr)
+        inv_sum = sum(inv)
+        if ctr_sum > inv_sum:
+            check_first = '중재'
+        else:
+            check_first = '통제'
+        control_gwam_range, intervene_gwam_range = control_range[1], intervene_range[1]
+
     start_range, end_range = start_end_range[0], start_end_range[1]
 
-    # 갈망 수준별 영상 인덱스 탐색
     low_range = find_index_by_keyword(column_index=2, keyword='_낮은_')
     mid_range = find_index_by_keyword(column_index=2, keyword='_중간_')
     high_range = find_index_by_keyword(column_index=2, keyword='_높은_')
 
+
+
     def extract_timestamps(rng):
-        """
-            주어진 인덱스 리스트로부터 (시작 시각, 종료 시각) 튜플 리스트를 추출하는 내부 함수.
-
-            args:
-                rng(list): 인덱스 리스트
-
-            return:
-                list: 각 영상의 시작시간과 끝시간을 저장한 리스트
-        """
         result = []
         for i in rng:
             try:
-                # 종료 시각(컬럼 9), 재생 시간(컬럼 10) 정보 추출
+                # 종료 시각 파싱
                 end_time_raw = df.iloc[i, 9]
 
-                # 12시간제(PM/AM 포함)와 24시간제 형식을 구분하여 파싱
                 if 'PM' in end_time_raw or 'AM' in end_time_raw:
                     # 12시간제 처리
                     end_time = datetime.strptime(end_time_raw.strip(), "%Y-%m-%d %I:%M:%S.%f %p")
@@ -191,15 +199,21 @@ def get_VR_timestamp(file_path):
                 mins, secs = df.iloc[i, 10].split(":")
                 delta = timedelta(minutes=int(mins), seconds=float(secs))
 
-                # 종료 시각에서 재생 시간을 빼서 시작 시각 계산
+                # 원래 start_time 계산
                 start_time = end_time - delta
 
-                # 데이터 안정성을 위해 시작/종료 시각에 1초 마진 적용
+                # print('before start : ', datetime.strftime(start_time, "%Y-%m-%d %H:%M:%S.%f")[:-3])
+                # print('before end   : ', datetime.strftime(end_time, "%Y-%m-%d %H:%M:%S.%f")[:-3])
+
+                # 마진 1초 적용 (start+1초, end-1초)
                 margin = timedelta(seconds=1)
                 start_time_margin = start_time + margin
                 end_time_margin = end_time - margin
 
-                # 마진 적용 후 유효성 체크
+                # print('after  start : ', datetime.strftime(start_time_margin, "%Y-%m-%d %H:%M:%S.%f")[:-3])
+                # print('after  end   : ', datetime.strftime(end_time_margin, "%Y-%m-%d %H:%M:%S.%f")[:-3])
+
+                # 유효성 체크
                 if start_time_margin >= end_time_margin:
                     print(f"[⚠️] index {i}: 마진 적용 후 시작 시각이 종료 시각과 같거나 이후입니다. 무시됩니다.")
                     continue
@@ -207,6 +221,7 @@ def get_VR_timestamp(file_path):
                 # 문자열로 변환
                 start_str = datetime.strftime(start_time_margin, "%Y-%m-%d %H:%M:%S.%f")[:-3]
                 end_str = datetime.strftime(end_time_margin, "%Y-%m-%d %H:%M:%S.%f")[:-3]
+
                 result.append((start_str, end_str))
 
             except Exception as e:
@@ -217,15 +232,17 @@ def get_VR_timestamp(file_path):
 
         return result
 
-    # 각 구간별로 타임스탬프 추출 실행
     start = extract_timestamps([start_range])
     end = extract_timestamps([end_range])
 
     low = extract_timestamps(low_range)
     mid = extract_timestamps(mid_range)
     high = extract_timestamps(high_range)
-
-    return start, end, low, mid, high
+    if len(start_end_range) >= 3 and temp:
+        control = extract_timestamps([control_gwam_range])
+        intervene = extract_timestamps([intervene_gwam_range])
+        return start, end, low, mid, high, control, intervene
+    return start, end, low, mid, high, None, None
 
 def convert_to_unix(time_str):
     """
@@ -351,7 +368,7 @@ def get_label(base_dir: str, sam_result_path: str, subject_path: str, output_dir
         return None
 
     # VR 타임스탬프에서 low, mid, high 영상 개수 확인
-    start, end, low, mid, high = get_VR_timestamp(file_path=VR_timestamp_path)
+    start, end, low, mid, high, _, _ = get_VR_timestamp(file_path=VR_timestamp_path)
 
     # 영상 파일명 리스트 생성
     label = []
@@ -1225,7 +1242,10 @@ def process_biosignals_gsr(subject_path, save_path=None):
                 # 결과 정리 및 리스트에 추가
                 if eda_metrics_df is not None:
                     # DataFrame가 None이 아니라면 결과를 딕셔너리로 변환
-                    eda_metrics_dict = eda_metrics_df.to_dict(orient='records')[0]
+                    try:
+                        eda_metrics_dict = eda_metrics_df.to_dict(orient='records')[0]
+                    except:
+                        eda_metrics_dict = eda_metrics_df
                     result_data = {'File': file_name, **eda_metrics_dict}
                     results_list.append(result_data)
 
@@ -1264,7 +1284,9 @@ def calculate_scr_scl(sig, fs, sig_type):
         if sig_type == "GSR":
             # GSR 전처리
             gsr_sig, m = nk.eda_process(smoothed, sampling_rate=fs)
-            analyze_df = nk.eda_analyze(gsr_sig, sampling_rate=fs)
+            analyze_df = _eda_intervalrelated(gsr_sig, sampling_rate=fs)
+            # analyze_df = nk.eda_analyze(gsr_sig, sampling_rate=int(fs))
+
             return analyze_df
 
     except Exception as e:
@@ -1311,7 +1333,7 @@ def load_feature_csv(path, subject, drop_cols=None, pivot=False, index_col="File
 
     return df
 
-def save_joined_features(subject = "1_1_001_V2", save_dir = "../features/joined"):
+def save_joined_features(subject = "1_1_001_V2", save_dir = "../features/joined", feature_path="../features/"):
     """
     특정 Subject의 모든 분산된 Feature들을 하나로 통합하여 단일 CSV 파일로 저장.
 
@@ -1325,12 +1347,12 @@ def save_joined_features(subject = "1_1_001_V2", save_dir = "../features/joined"
     """
     print(f"{subject} 추출한 특징 파일 병합 시작")
     # ---- 메인 코드 ----
-    EDA_path    = r"../features/EDA"
-    HR_HRV_path = r"../features/HR_HRV"
-    PTT_path    = r"../features/PTT"
-    RR_path     = r"../features/RR"
-    SI_path     = r"../features/SI"
-    label_path  = r"../features/label"
+    EDA_path    = feature_path+"EDA"
+    HR_HRV_path = feature_path+"HR_HRV"
+    PTT_path    = feature_path+"PTT"
+    RR_path     = feature_path+"RR"
+    SI_path     = feature_path+"SI"
+    label_path  = feature_path+"label"
 
     # 1. EDA
     EDA_feature = load_feature_csv(f"{EDA_path}/{subject}/{subject}.csv", subject)
@@ -1612,3 +1634,143 @@ def compute_correlations(feature_df, label_df, label_name="label", min_samples=1
 
     # feature별 correlation 결과 반환 (Series)
     return pd.Series(corr_vals)
+
+def eda_autocor(eda_cleaned, sampling_rate=1000, lag=4):
+    """**EDA Autocorrelation**
+
+    Compute the autocorrelation measure of raw EDA signal i.e., the correlation between the time
+    series data and a specified time-lagged version of itself.
+
+    Parameters
+    ----------
+    eda_cleaned : Union[list, np.array, pd.Series]
+        The cleaned EDA signal.
+    sampling_rate : int
+        The sampling frequency of raw EDA signal (in Hz, i.e., samples/second). Defaults to 1000Hz.
+    lag : int
+        Time lag in seconds. Defaults to 4 seconds to avoid autoregressive
+        correlations approaching 1, as recommended by Halem et al. (2020).
+
+    Returns
+    -------
+    float
+        Autocorrelation index of the eda signal.
+
+    See Also
+    --------
+    eda_simulate, eda_clean
+
+
+    Examples
+    ---------
+    .. ipython:: python
+
+      import neurokit2 as nk
+
+      # Simulate EDA signal
+      eda_signal = nk.eda_simulate(duration=5, scr_number=5, drift=0.1)
+      eda_cleaned = nk.eda_clean(eda_signal)
+      cor = nk.eda_autocor(eda_cleaned)
+      cor
+
+    References
+    -----------
+    * van Halem, S., Van Roekel, E., Kroencke, L., Kuper, N., & Denissen, J. (2020). Moments that
+      matter? On the complexity of using triggers based on skin conductance to sample arousing
+      events within an experience sampling framework. European Journal of Personality, 34(5),
+      794-807.
+
+    """
+    # Sanity checks
+    if isinstance(eda_cleaned, pd.DataFrame):
+        colnames = eda_cleaned.columns.values
+        if len([i for i in colnames if "EDA_Clean" in i]) == 0:
+            raise ValueError(
+                "NeuroKit error: eda_autocor(): Your input does not contain the cleaned EDA signal."
+            )
+        else:
+            eda_cleaned = eda_cleaned["EDA_Clean"]
+    if isinstance(eda_cleaned, pd.Series):
+        eda_cleaned = eda_cleaned.values
+
+    # Autocorrelation
+    lag_samples = int(lag * sampling_rate)
+
+    if lag_samples > len(eda_cleaned):
+        raise ValueError(
+            "NeuroKit error: eda_autocor(): The time lag "
+            "exceeds the duration of the EDA signal. "
+            "Consider using a longer duration of the EDA signal."
+        )
+
+    cor, _ = signal_autocor(eda_cleaned, lag=lag_samples)
+
+    return cor
+
+def _eda_intervalrelated(data, output={}, sampling_rate=1000, method_sympathetic="posada", **kwargs):
+    """Format input for dictionary."""
+    # Sanitize input
+    colnames = data.columns.values
+
+    # SCR Peaks
+    if "SCR_Peaks" not in colnames:
+        warn(
+            "We couldn't find an `SCR_Peaks` column. Returning NaN for N peaks.",
+            category=NeuroKitWarning,
+        )
+        output["SCR_Peaks_N"] = np.nan
+    else:
+        output["SCR_Peaks_N"] = np.nansum(data["SCR_Peaks"].values)
+
+    # Peak amplitude
+    if "SCR_Amplitude" not in colnames:
+        warn(
+            "We couldn't find an `SCR_Amplitude` column. Returning NaN for peak amplitude.",
+            category=NeuroKitWarning,
+        )
+        output["SCR_Peaks_Amplitude_Mean"] = np.nan
+    else:
+        peaks_idx = data["SCR_Peaks"] == 1
+        # Mean amplitude is only computed over peaks. If no peaks, return NaN
+        if peaks_idx.sum() > 0:
+            output["SCR_Peaks_Amplitude_Mean"] = np.nanmean(data[peaks_idx]["SCR_Amplitude"].values)
+        else:
+            output["SCR_Peaks_Amplitude_Mean"] = np.nan
+
+    # Get variability of tonic
+    if "EDA_Tonic" in colnames:
+        output["EDA_Tonic_SD"] = np.nanstd(data["EDA_Tonic"].values)
+
+    # EDA Sympathetic
+    output.update({"EDA_Sympathetic": np.nan, "EDA_SympatheticN": np.nan})  # Default values
+    if len(data) > sampling_rate * 64:
+        if "EDA_Clean" in colnames:
+            output.update(
+                eda_sympathetic(
+                    data["EDA_Clean"],
+                    sampling_rate=sampling_rate,
+                    method=method_sympathetic,
+                )
+            )
+        elif "EDA_Raw" in colnames:
+            # If not clean signal, use raw
+            output.update(
+                eda_sympathetic(
+                    data["EDA_Raw"],
+                    sampling_rate=sampling_rate,
+                    method=method_sympathetic,
+                )
+            )
+
+    # EDA autocorrelation
+    output.update({"EDA_Autocorrelation": np.nan})  # Default values
+    # try:
+    #     if len(data) > sampling_rate:  # 30 seconds minimum (NOTE: somewhat arbitrary)
+    #         if "EDA_Clean" in colnames:
+    #             output["EDA_Autocorrelation"] = eda_autocor(data["EDA_Clean"], sampling_rate=sampling_rate,lag=5)
+    #         elif "EDA_Raw" in colnames:
+    #             # If not clean signal, use raw
+    #             output["EDA_Autocorrelation"] = eda_autocor(data["EDA_Raw"], sampling_rate=sampling_rate,lag=5)
+    # except:
+    #     pass
+    return output
