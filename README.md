@@ -4,7 +4,6 @@
 
 [![Python](https://img.shields.io/badge/Python-3.8%2B-blue?logo=python&logoColor=white)](https://www.python.org/)
 [![Status](https://img.shields.io/badge/Status-In%20Progress-yellow)]()
-[![License](https://img.shields.io/badge/License-MIT-green)]()
 
 ---
 
