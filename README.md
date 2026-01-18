@@ -34,15 +34,11 @@
 
 ```bash
 hyuki0003-Craving_Biomarker_Analysis_official_test/
-├── 📂 data/                # (Git ignore 권장) 원본 및 전처리된 데이터
-│   ├── raw/                # Raw data
-│   └── processed/          # Preprocessed data
-├── 📂 notebooks/           # Jupyter Notebooks (EDA 및 테스트용)
-├── 📂 src/                 # 소스 코드 패키지
-│   ├── preprocessing.py    # 전처리 모듈
-│   ├── features.py         # 피처 추출 모듈
-│   └── models.py           # 모델링 모듈
-├── 📂 results/             # 분석 결과 및 그래프 저장
-├── .gitignore              # Git 제외 파일 목록
-├── requirements.txt        # 의존성 패키지 목록
-└── README.md               # 프로젝트 설명 파일
+├── 📂 code/
+│   ├── calculate_decline_final.ipynb    # 갈망 중재 효과 검증
+│   ├── features_correlation_final.ipynb # 갈망-SA 상관성 분석           
+│   ├── util/                
+│         └── util.py                    # Preprocessed data
+├── .gitignore                           # Git 제외 파일 목록
+├── requirements.txt                     # 의존성 패키지 목록
+└── README.md                            # 프로젝트 설명 파일
