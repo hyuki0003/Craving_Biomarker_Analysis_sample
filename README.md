@@ -1,6 +1,6 @@
 # 🧠 Craving Biomarker Analysis (Official Test)
 
-> **Official Test Repo of [STEAM - Craving Biomarker Analysis]** > STEAM 과제의 '갈망(Craving) 바이오마커 분석' 프로젝트를 위한 공식 테스트 및 검증 레포지토리입니다.
+> **Official Test Repository of [STEAM - Craving Biomarker Analysis]** > STEAM 과제의 '갈망(Craving) 바이오마커 분석' 프로젝트를 위한 공식 테스트 및 검증 레포지토리입니다.
 
 [![Python](https://img.shields.io/badge/Python-3.8%2B-blue?logo=python&logoColor=white)](https://www.python.org/)
 [![Status](https://img.shields.io/badge/Status-In%20Progress-yellow)]()
